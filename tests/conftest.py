@@ -1,19 +1,26 @@
-import pytest
 import numpy as np
-import mlx.core as mx
+import pytest
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: marks tests that download models and run E2E")
 
 
 @pytest.fixture
-def sample_audio():
-    """Generate a 1-second sine wave at 440Hz as test audio (16kHz sample rate)."""
-    sr = 16000
-    t = np.linspace(0, 1, sr, dtype=np.float32)
+def sine_440hz():
+    """1-second 440Hz sine wave at 16kHz sample rate."""
+    t = np.linspace(0, 1, 16000, endpoint=False, dtype=np.float32)
     return np.sin(2 * np.pi * 440 * t)
 
 
 @pytest.fixture
-def sample_mel(sample_audio):
-    """Generate mel spectrogram from sample audio."""
-    from lightning_whisper_mlx.audio import log_mel_spectrogram
+def sine_1000hz():
+    """1-second 1000Hz sine wave at 16kHz sample rate."""
+    t = np.linspace(0, 1, 16000, endpoint=False, dtype=np.float32)
+    return np.sin(2 * np.pi * 1000 * t)
 
-    return log_mel_spectrogram(sample_audio)
+
+@pytest.fixture
+def silence():
+    """1 second of silence at 16kHz."""
+    return np.zeros(16000, dtype=np.float32)
