@@ -16,4 +16,7 @@ setup(
         "tiktoken==0.3.3",
         "scipy"
     ],
+    extras_require={
+        "dev": ["pytest"],
+    },
 )
