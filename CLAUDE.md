@@ -9,17 +9,21 @@ Lightning Whisper MLX is a high-performance Whisper speech-to-text implementatio
 ## Setup & Development
 
 ```bash
-pip install -e .
+uv sync                  # base dependencies
+uv sync --extra dev      # + pytest
+uv sync --extra tts      # + f5-tts-mlx
+uv sync --all-extras     # everything
 ```
 
 **Runtime dependency:** `ffmpeg` must be in PATH (used by `audio.py:load_audio` to decode audio files via subprocess).
 
-**No test framework** — `test.py` is a manual smoke test:
+**Tests:**
 ```bash
-python test.py  # requires ./cut.mp3 to exist
+uv run pytest tests/ -v              # unit tests only (~1s)
+uv run pytest tests/ -v -m slow      # include E2E roundtrip (~40s, downloads models)
 ```
 
-No linter, formatter, or CI configured. `tiktoken` is pinned to `0.3.3`. Dependencies: `huggingface_hub`, `mlx`, `numba`, `numpy`, `tqdm`, `tiktoken==0.3.3`, `scipy`.
+No linter, formatter, or CI configured. `tiktoken` is pinned to `0.3.3`. Build system: `pyproject.toml` with hatchling backend.
 
 ## Architecture
 
@@ -31,11 +35,15 @@ __init__.py → lightning.py → transcribe.py → audio.py
                                             → decoding.py → tokenizer.py
                                             → timing.py
                                             → tokenizer.py
+           → tts.py → f5_tts_mlx (external, optional)
 ```
 
 ### Public API
 
-`LightningWhisperMLX` (`lightning.py`) is the sole public class, re-exported from `__init__.py`. Constructor downloads weights from HuggingFace Hub via `hf_hub_download`; `transcribe()` delegates entirely to `transcribe_audio()`.
+Two public classes re-exported from `__init__.py`:
+
+- **`LightningWhisperMLX`** (`lightning.py`) — STT. Constructor downloads Whisper weights from HuggingFace Hub; `transcribe()` delegates to `transcribe_audio()`.
+- **`LightningTTSMLX`** (`tts.py`) — TTS. Lazy-loaded via `__getattr__` to avoid requiring the optional `f5-tts-mlx` dependency. Wraps `f5_tts_mlx.generate.generate()`. Install with `uv sync --extra tts`.
 
 ### Model Registry (`lightning.py:models`)
 
