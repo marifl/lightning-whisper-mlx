@@ -52,28 +52,26 @@ models = {
 }
 
 class LightningWhisperMLX():
-    def __init__(self, model, batch_size = 12, quant=None):
-        if quant and (quant != "4bit" and quant !="8bit"):
+    def __init__(self, model, batch_size=12, quant=None):
+        if quant and (quant != "4bit" and quant != "8bit"):
             raise ValueError("Quantization must be `4bit` or `8bit`")
-        
-        if model not in models: 
+
+        if model not in models:
             raise ValueError("Please select a valid model")
-        
+
+        if quant and "distil" in model:
+            raise ValueError(
+                f"Quantization is not supported for distilled model '{model}'. "
+                "Distilled models are already optimized for speed. Use quant=None."
+            )
+
         self.name = model
         self.batch_size = batch_size
 
-        repo_id = ""
-
-        if quant and "distil" not in model:
+        if quant:
             repo_id = models[model][quant]
         else:
             repo_id = models[model]['base']
-        
-        if quant and "distil" in model: 
-            if quant == "4bit": 
-                self.name += "-4-bit" 
-            else:
-                self.name += "-8-bit"
 
         if "distil" in model:
             filename1 = f"./mlx_models/{self.name}/weights.npz"
