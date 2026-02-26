@@ -12,9 +12,7 @@ setup(
         "mlx",
         "numba",
         "numpy",
-        "torch",
         "tqdm",
-        "more-itertools",
         "tiktoken==0.3.3",
         "scipy"
     ],
