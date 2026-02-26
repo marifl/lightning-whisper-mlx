@@ -265,7 +265,6 @@ class GreedyDecoder(TokenDecoder):
         else:
             next_tokens = mx.random.categorical(logits=logits / self.temperature)
 
-        next_tokens = mx.argmax(logits, axis=-1)
         logits = logits.astype(mx.float32)
         logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
 

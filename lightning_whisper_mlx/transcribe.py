@@ -6,8 +6,6 @@ from typing import List, Optional, Tuple, Union
 
 import mlx.core as mx
 import numpy as np
-import tqdm
-import time
 
 from .audio import (
     FRAMES_PER_SECOND,
@@ -22,23 +20,6 @@ from .decoding import DecodingOptions, DecodingResult
 from .load_models import load_model
 from .timing import add_word_timestamps
 from .tokenizer import LANGUAGES, get_tokenizer
-
-
-def _format_timestamp(seconds: float):
-    assert seconds >= 0, "non-negative timestamp expected"
-    milliseconds = round(seconds * 1000.0)
-
-    hours = milliseconds // 3_600_000
-    milliseconds -= hours * 3_600_000
-
-    minutes = milliseconds // 60_000
-    milliseconds -= minutes * 60_000
-
-    seconds = milliseconds // 1_000
-    milliseconds -= seconds * 1_000
-
-    hours_marker = f"{hours:02d}:" if hours > 0 else ""
-    return f"{hours_marker}{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
 
 def _get_end(segments: List[dict]) -> Optional[float]:
@@ -76,7 +57,7 @@ def transcribe_audio(
     append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
     clip_timestamps: Union[str, List[float]] = "0",
     hallucination_silence_threshold: Optional[float] = None,
-    batch_size: 6,
+    batch_size: int = 12,
     **decode_options,
 ):
     """
@@ -198,7 +179,7 @@ def transcribe_audio(
         seek_points.append(content_frames)
     seek_clips: List[Tuple[int, int]] = list(zip(seek_points[::2], seek_points[1::2]))
 
-    punctuation = "\"'“¿([{-\"'.。,，!！?？:：”)]}、"
+    punctuation = "\"'\u201c\u00bf([{-\"'.\u3002,\uff0c!\uff01?\uff1f:\uff1a\u201d)]}\u3001"
 
     if word_timestamps and task == "translate":
         warnings.warn("Word-level timestamps on translations may not be reliable.")
@@ -389,7 +370,7 @@ def transcribe_audio(
                 segment["text"] = ""
                 segment["tokens"] = []
                 segment["words"] = []
-        
+
         return current_segments, seek
 
     seek_clip_end = seek_clips[0][1]
