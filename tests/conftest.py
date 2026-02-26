@@ -2,10 +2,6 @@ import numpy as np
 import pytest
 
 
-def pytest_configure(config):
-    config.addinivalue_line("markers", "slow: marks tests that download models and run E2E")
-
-
 @pytest.fixture
 def sine_440hz():
     """1-second 440Hz sine wave at 16kHz sample rate."""

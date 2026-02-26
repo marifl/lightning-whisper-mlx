@@ -16,12 +16,12 @@ class LightningTTSMLX:
             return
         try:
             from f5_tts_mlx.generate import generate
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
                 "f5-tts-mlx is required for TTS. Install it with:\n"
                 "  pip install lightning-whisper-mlx[tts]\n"
                 "  # or: uv sync --extra tts"
-            )
+            ) from e
         self._f5_generate = generate
 
     def generate(

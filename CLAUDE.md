@@ -19,8 +19,8 @@ uv sync --all-extras     # everything
 
 **Tests:**
 ```bash
-uv run pytest tests/ -v              # unit tests only (~1s)
-uv run pytest tests/ -v -m slow      # include E2E roundtrip (~40s, downloads models)
+uv run pytest tests/ -v                 # unit tests only (~1s, slow tests excluded by default)
+uv run pytest tests/ -v -m ''          # all tests incl E2E roundtrip (~40s, downloads models)
 ```
 
 No linter, formatter, or CI configured. `tiktoken` is pinned to `0.3.3`. Build system: `pyproject.toml` with hatchling backend.

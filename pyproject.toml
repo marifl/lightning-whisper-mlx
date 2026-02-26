@@ -25,6 +25,7 @@ build-backend = "hatchling.build"
 packages = ["lightning_whisper_mlx"]
 
 [tool.pytest.ini_options]
+addopts = "-m 'not slow'"
 markers = [
-    "slow: marks tests that download models and run E2E (deselect with '-m \"not slow\"')",
+    "slow: marks tests that download models and run E2E (run with '-m slow')",
 ]
