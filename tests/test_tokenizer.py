@@ -1,118 +1,97 @@
-import pytest
-
-from lightning_whisper_mlx.tokenizer import Tokenizer, get_tokenizer
+from lightning_whisper_mlx.tokenizer import get_tokenizer
 
 
-class TestGetTokenizer:
-    def test_english_only(self):
-        tok = get_tokenizer(multilingual=False)
-        assert isinstance(tok, Tokenizer)
-        assert tok.language is None
-        assert tok.task is None
+class TestSpecialTokenIds:
+    """Whisper special tokens must have exact known IDs from the tokenizer spec."""
 
-    def test_multilingual_defaults(self):
-        tok = get_tokenizer(multilingual=True)
-        assert tok.language == "en"
-        assert tok.task == "transcribe"
+    def test_eot(self):
+        tok = get_tokenizer(multilingual=True, language="en")
+        assert tok.eot == 50257
 
-    def test_multilingual_with_language(self):
+    def test_sot(self):
+        tok = get_tokenizer(multilingual=True, language="en")
+        assert tok.sot == 50258
+
+    def test_timestamp_begin(self):
+        tok = get_tokenizer(multilingual=True, language="en")
+        assert tok.timestamp_begin == 50364
+
+    def test_no_timestamps(self):
+        tok = get_tokenizer(multilingual=True, language="en")
+        assert tok.no_timestamps == 50363
+
+
+class TestLanguageTokens:
+    """Language tokens must map to exact known IDs."""
+
+    def test_english_token(self):
+        tok = get_tokenizer(multilingual=True, language="en")
+        assert tok.language_token == 50259  # <|en|>
+
+    def test_german_token(self):
         tok = get_tokenizer(multilingual=True, language="de")
-        assert tok.language == "de"
+        assert tok.language_token == 50261  # <|de|>
 
-    def test_multilingual_translate_task(self):
-        tok = get_tokenizer(multilingual=True, language="fr", task="translate")
-        assert tok.task == "translate"
+    def test_french_token(self):
+        tok = get_tokenizer(multilingual=True, language="fr")
+        assert tok.language_token == 50265  # <|fr|>
 
-    def test_invalid_language_raises(self):
-        with pytest.raises(ValueError, match="Unsupported language"):
-            get_tokenizer(multilingual=True, language="klingon")
-
-    def test_language_name_lookup(self):
+    def test_language_name_lookup_resolves(self):
+        """Passing 'german' must resolve to language code 'de'."""
         tok = get_tokenizer(multilingual=True, language="german")
         assert tok.language == "de"
+        assert tok.language_token == 50261
 
 
-class TestTokenizerEncodeDecode:
-    @pytest.fixture
-    def tokenizer(self):
-        return get_tokenizer(multilingual=True, language="en")
+class TestSotSequence:
+    """The start-of-transcript sequence must contain exact token IDs."""
 
-    def test_encode_returns_list_of_ints(self, tokenizer):
-        tokens = tokenizer.encode("hello world")
-        assert isinstance(tokens, list)
-        assert all(isinstance(t, int) for t in tokens)
+    def test_english_transcribe(self):
+        tok = get_tokenizer(multilingual=True, language="en")
+        assert tok.sot_sequence == (50258, 50259, 50359)
 
-    def test_decode_returns_string(self, tokenizer):
-        tokens = tokenizer.encode("hello world")
-        text = tokenizer.decode(tokens)
-        assert isinstance(text, str)
+    def test_english_translate(self):
+        tok = get_tokenizer(multilingual=True, language="en", task="translate")
+        assert tok.sot_sequence == (50258, 50259, 50358)
 
-    def test_roundtrip(self, tokenizer):
-        original = "hello world"
-        tokens = tokenizer.encode(original)
-        decoded = tokenizer.decode(tokens)
+    def test_german_transcribe(self):
+        tok = get_tokenizer(multilingual=True, language="de")
+        assert tok.sot_sequence == (50258, 50261, 50359)
+
+
+class TestEncodeDecode:
+    """Encoding and decoding must produce exact known token sequences."""
+
+    def test_encode_hello(self):
+        tok = get_tokenizer(multilingual=True, language="en")
+        assert tok.encode(" hello") == [7751]
+
+    def test_roundtrip(self):
+        tok = get_tokenizer(multilingual=True, language="en")
+        original = " hello world"
+        decoded = tok.decode(tok.encode(original))
         assert decoded == original
 
-    def test_empty_string(self, tokenizer):
-        tokens = tokenizer.encode("")
-        assert tokens == []
-        assert tokenizer.decode([]) == ""
+    def test_empty_string(self):
+        tok = get_tokenizer(multilingual=True, language="en")
+        assert tok.encode("") == []
+        assert tok.decode([]) == ""
 
 
-class TestTokenizerSpecialTokens:
-    @pytest.fixture
-    def tokenizer(self):
-        return get_tokenizer(multilingual=True, language="en")
+class TestSplitToWordTokens:
+    """Word splitting must produce correct word boundaries."""
 
-    def test_eot_exists(self, tokenizer):
-        assert isinstance(tokenizer.eot, int)
-        assert tokenizer.eot > 0
-
-    def test_sot_exists(self, tokenizer):
-        assert isinstance(tokenizer.sot, int)
-        assert tokenizer.sot > 0
-
-    def test_timestamp_begin(self, tokenizer):
-        assert isinstance(tokenizer.timestamp_begin, int)
-        assert tokenizer.timestamp_begin > tokenizer.eot
-
-    def test_no_timestamps_token(self, tokenizer):
-        assert isinstance(tokenizer.no_timestamps, int)
-
-    def test_sot_sequence_structure(self, tokenizer):
-        seq = tokenizer.sot_sequence
-        assert isinstance(seq, tuple)
-        assert len(seq) >= 1
-        assert seq[0] == tokenizer.sot
-
-    def test_sot_sequence_includes_language_and_task(self, tokenizer):
-        seq = tokenizer.sot_sequence
-        # For multilingual with language="en" and task="transcribe":
-        # [sot, language_token, transcribe_token]
-        assert len(seq) == 3
-
-    def test_all_language_tokens(self, tokenizer):
-        lang_tokens = tokenizer.all_language_tokens
-        assert len(lang_tokens) > 0
-        assert all(isinstance(t, int) for t in lang_tokens)
-
-    def test_non_speech_tokens(self, tokenizer):
-        non_speech = tokenizer.non_speech_tokens
-        assert isinstance(non_speech, tuple)
-        assert len(non_speech) > 0
+    def test_hello_world_splits_into_two_words(self):
+        tok = get_tokenizer(multilingual=True, language="en")
+        tokens = tok.encode(" hello world")
+        words, word_tokens = tok.split_to_word_tokens(tokens + [tok.eot])
+        assert len(words) == 2
+        assert words[0].strip() == "hello"
+        assert words[1].strip() == "world"
 
 
-class TestTokenizerWordSplit:
-    @pytest.fixture
-    def tokenizer(self):
-        return get_tokenizer(multilingual=True, language="en")
-
-    def test_split_to_word_tokens(self, tokenizer):
-        tokens = tokenizer.encode(" hello world")
-        words, word_tokens = tokenizer.split_to_word_tokens(
-            tokens + [tokenizer.eot]
-        )
-        assert len(words) > 0
-        assert len(words) == len(word_tokens)
-        # Each word should have at least one token
-        assert all(len(wt) > 0 for wt in word_tokens)
+class TestInvalidInput:
+    def test_invalid_language_raises(self):
+        import pytest
+        with pytest.raises(ValueError, match="Unsupported language"):
+            get_tokenizer(multilingual=True, language="klingon")
