@@ -179,7 +179,7 @@ def transcribe_audio(
         seek_points.append(content_frames)
     seek_clips: List[Tuple[int, int]] = list(zip(seek_points[::2], seek_points[1::2]))
 
-    punctuation = "\"'"¿([{-\"'.。,，!！?？:：")]}、"
+    punctuation = "\"'\u201c\u00bf([{-\"'.\u3002,\uff0c!\uff01?\uff1f:\uff1a\u201d)]}\u3001"
 
     if word_timestamps and task == "translate":
         warnings.warn("Word-level timestamps on translations may not be reliable.")
