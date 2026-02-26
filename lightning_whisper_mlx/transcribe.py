@@ -22,6 +22,13 @@ from .timing import add_word_timestamps
 from .tokenizer import LANGUAGES, get_tokenizer
 
 
+def _get_end(segments: List[dict]) -> Optional[float]:
+    return next(
+        (w["end"] for s in reversed(segments) for w in reversed(s["words"])),
+        segments[-1]["end"] if segments else None,
+    )
+
+
 class ModelHolder:
     model = None
     model_path = None
@@ -49,6 +56,7 @@ def transcribe_audio(
     prepend_punctuations: str = "\"'“¿([{-",
     append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
     clip_timestamps: Union[str, List[float]] = "0",
+    hallucination_silence_threshold: Optional[float] = None,
     batch_size: int = 12,
     **decode_options,
 ):
@@ -108,6 +116,10 @@ def transcribe_audio(
         Comma-separated list start,end,start,end,... timestamps (in seconds) of clips to process.
         The last end timestamp defaults to the end of the file.
 
+    hallucination_silence_threshold: Optional[float]
+        When word_timestamps is True, skip silent periods longer than this threshold (in seconds)
+        when a possible hallucination is detected
+
     Returns
     -------
     A dictionary containing the resulting text ("text") and segment-level details ("segments"), and
@@ -166,6 +178,8 @@ def transcribe_audio(
     if len(seek_points) % 2 == 1:
         seek_points.append(content_frames)
     seek_clips: List[Tuple[int, int]] = list(zip(seek_points[::2], seek_points[1::2]))
+
+    punctuation = "\"'"¿([{-\"'.。,，!！?？:：")]}、"
 
     if word_timestamps and task == "translate":
         warnings.warn("Word-level timestamps on translations may not be reliable.")
@@ -259,6 +273,31 @@ def transcribe_audio(
                 )
                 return current_segments, seek
 
+        def word_anomaly_score(word: dict) -> float:
+            probability = word.get("probability", 0.0)
+            duration = word["end"] - word["start"]
+            score = 0.0
+            if probability < 0.15:
+                score += 1.0
+            if duration < 0.133:
+                score += (0.133 - duration) * 15
+            if duration > 2.0:
+                score += duration - 2.0
+            return score
+
+        def is_segment_anomaly(segment: Optional[dict]) -> bool:
+            if segment is None or not segment["words"]:
+                return False
+            words = [
+                w for w in segment["words"] if w["word"] not in punctuation
+            ]
+            words = words[:8]
+            score = sum(word_anomaly_score(w) for w in words)
+            return score >= 3 or score + 0.01 >= len(words)
+
+        def next_words_segment(segments: List[dict]) -> Optional[dict]:
+            return next((s for s in segments if s["words"]), None)
+
         timestamp_tokens = tokens >= tokenizer.timestamp_begin
         single_timestamp_ending = timestamp_tokens[-2:].tolist() == [
             False,
@@ -330,7 +369,8 @@ def transcribe_audio(
             ):
                 segment["text"] = ""
                 segment["tokens"] = []
-        
+                segment["words"] = []
+
         return current_segments, seek
 
     seek_clip_end = seek_clips[0][1]
