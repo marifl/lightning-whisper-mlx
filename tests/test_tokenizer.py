@@ -81,13 +81,16 @@ class TestEncodeDecode:
 class TestSplitToWordTokens:
     """Word splitting must produce correct word boundaries."""
 
-    def test_hello_world_splits_into_two_words(self):
+    def test_hello_world_splits_into_words_plus_eot(self):
+        """split_to_word_tokens includes EOT as a separate special 'word'."""
         tok = get_tokenizer(multilingual=True, language="en")
         tokens = tok.encode(" hello world")
         words, word_tokens = tok.split_to_word_tokens(tokens + [tok.eot])
-        assert len(words) == 2
+        # 2 real words + 1 EOT special token
+        assert len(words) == 3
         assert words[0].strip() == "hello"
         assert words[1].strip() == "world"
+        assert words[2] == "<|endoftext|>"
 
 
 class TestInvalidInput:
