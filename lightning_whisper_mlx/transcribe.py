@@ -6,8 +6,6 @@ from typing import List, Optional, Tuple, Union
 
 import mlx.core as mx
 import numpy as np
-import tqdm
-import time
 
 from .audio import (
     FRAMES_PER_SECOND,
