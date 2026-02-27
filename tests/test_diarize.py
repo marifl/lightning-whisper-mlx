@@ -122,3 +122,100 @@ class TestDiarizeAudioImportGuard:
 
         with pytest.raises(EnvironmentError, match="HF_TOKEN"):
             diarize_audio("dummy.wav")
+
+
+class TestTranscribeDiarizeIntegration:
+    """transcribe(diarize=True) must wire diarize_audio + assign_speakers correctly."""
+
+    def test_diarize_transforms_segments_to_dicts(self, monkeypatch):
+        """When diarize=True, segments become dicts with speaker labels."""
+        from lightning_whisper_mlx.lightning import LightningWhisperMLX
+
+        mock_transcription = {
+            "text": "Hello world.",
+            "segments": [[0, 300, "Hello world."]],
+            "language": "en",
+        }
+
+        mock_turns = [
+            {"speaker": "SPEAKER_00", "start": 0.0, "end": 5.0},
+        ]
+
+        # Patch transcribe_audio to avoid loading a real model
+        monkeypatch.setattr(
+            "lightning_whisper_mlx.lightning.transcribe_audio",
+            lambda *args, **kwargs: mock_transcription,
+        )
+        # Patch diarize_audio to avoid needing pyannote
+        monkeypatch.setattr(
+            "lightning_whisper_mlx.diarize.diarize_audio",
+            lambda *args, **kwargs: mock_turns,
+        )
+        # Patch __init__ to avoid downloading models
+        monkeypatch.setattr(
+            LightningWhisperMLX, "__init__",
+            lambda self, *args, **kwargs: setattr(self, "name", "tiny") or setattr(self, "batch_size", 12),
+        )
+
+        whisper = LightningWhisperMLX("tiny")
+        result = whisper.transcribe("dummy.wav", diarize=True)
+
+        assert isinstance(result["segments"][0], dict)
+        assert result["segments"][0]["speaker"] == "SPEAKER_00"
+        assert "start" in result["segments"][0]
+        assert "end" in result["segments"][0]
+        assert result["segments"][0]["text"] == "Hello world."
+
+    def test_diarize_false_preserves_original_format(self, monkeypatch):
+        """When diarize=False, segments stay as lists (backward compatible)."""
+        from lightning_whisper_mlx.lightning import LightningWhisperMLX
+
+        mock_transcription = {
+            "text": "Hello world.",
+            "segments": [[0, 300, "Hello world."]],
+            "language": "en",
+        }
+
+        monkeypatch.setattr(
+            "lightning_whisper_mlx.lightning.transcribe_audio",
+            lambda *args, **kwargs: mock_transcription,
+        )
+        monkeypatch.setattr(
+            LightningWhisperMLX, "__init__",
+            lambda self, *args, **kwargs: setattr(self, "name", "tiny") or setattr(self, "batch_size", 12),
+        )
+
+        whisper = LightningWhisperMLX("tiny")
+        result = whisper.transcribe("dummy.wav", diarize=False)
+
+        assert isinstance(result["segments"][0], list)
+
+    def test_speaker_count_params_forwarded(self, monkeypatch):
+        """num_speakers/min_speakers/max_speakers reach diarize_audio."""
+        from lightning_whisper_mlx.lightning import LightningWhisperMLX
+
+        captured = {}
+
+        def mock_diarize(audio_path, **kwargs):
+            captured.update(kwargs)
+            return [{"speaker": "SPEAKER_00", "start": 0.0, "end": 5.0}]
+
+        monkeypatch.setattr(
+            "lightning_whisper_mlx.lightning.transcribe_audio",
+            lambda *args, **kwargs: {"text": "", "segments": [[0, 300, "Hi."]], "language": "en"},
+        )
+        monkeypatch.setattr(
+            "lightning_whisper_mlx.diarize.diarize_audio",
+            mock_diarize,
+        )
+        monkeypatch.setattr(
+            LightningWhisperMLX, "__init__",
+            lambda self, *args, **kwargs: setattr(self, "name", "tiny") or setattr(self, "batch_size", 12),
+        )
+
+        whisper = LightningWhisperMLX("tiny")
+        whisper.transcribe("dummy.wav", diarize=True, num_speakers=2, min_speakers=1, max_speakers=3)
+
+        assert captured["num_speakers"] == 2
+        assert captured["min_speakers"] == 1
+        assert captured["max_speakers"] == 3

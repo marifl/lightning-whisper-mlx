@@ -1,7 +1,23 @@
+"""Speaker diarization using pyannote-audio (optional dependency)."""
+
 import os
 from typing import Optional
 
 from .audio import HOP_LENGTH, SAMPLE_RATE
+
+_pipeline_cache: dict = {}
+
+
+def _get_pipeline(hf_token: str):
+    """Return cached pyannote Pipeline, loading on first call."""
+    if hf_token not in _pipeline_cache:
+        from pyannote.audio import Pipeline
+
+        _pipeline_cache[hf_token] = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization-3.1",
+            token=hf_token,
+        )
+    return _pipeline_cache[hf_token]
 
 
 def _seek_to_seconds(seek: int) -> float:
@@ -25,7 +41,7 @@ def diarize_audio(
     Returns list of dicts: [{"speaker": "SPEAKER_00", "start": 0.2, "end": 1.5}, ...]
     """
     try:
-        from pyannote.audio import Pipeline
+        from pyannote.audio import Pipeline  # noqa: F401
     except ImportError as e:
         raise ImportError(
             "pyannote-audio is required for diarization. Install it with:\n"
@@ -37,16 +53,19 @@ def diarize_audio(
     if not hf_token:
         raise EnvironmentError(
             "HF_TOKEN environment variable required for pyannote diarization models.\n"
-            "Get a token at https://huggingface.co/settings/tokens"
+            "Get a token at https://huggingface.co/settings/tokens\n"
+            "Also accept the model terms at: "
+            "https://huggingface.co/pyannote/speaker-diarization-3.1"
         )
 
-    pipeline = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1",
-        use_auth_token=hf_token,
-    )
+    pipeline = _get_pipeline(hf_token)
 
-    diarization = pipeline(audio_path, num_speakers=num_speakers,
-                           min_speakers=min_speakers, max_speakers=max_speakers)
+    diarization = pipeline(
+        audio_path,
+        num_speakers=num_speakers,
+        min_speakers=min_speakers,
+        max_speakers=max_speakers,
+    )
 
     speaker_turns = []
     for turn, _, speaker in diarization.itertracks(yield_label=True):
@@ -60,7 +79,7 @@ def diarize_audio(
 
 
 def assign_speakers(
-    segments: list,
+    segments: list[list],
     speaker_turns: list[dict],
 ) -> list[dict]:
     """Assign speaker labels to transcription segments by temporal overlap.
