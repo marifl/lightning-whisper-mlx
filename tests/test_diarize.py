@@ -106,8 +106,28 @@ class TestAssignSpeakers:
         assert result[0]["end"] == pytest.approx(3.5, abs=0.02)
 
 
-class TestDiarizeAudioImportGuard:
-    """diarize_audio must raise EnvironmentError when HF_TOKEN is missing."""
+class TestDiarizeAudioGuards:
+    """diarize_audio must raise clear errors for missing dependencies."""
+
+    def test_missing_pyannote_raises_import_error(self, monkeypatch):
+        """Missing pyannote-audio raises ImportError with install instructions."""
+        import lightning_whisper_mlx.diarize as diarize_mod
+
+        # Block pyannote.audio import
+        original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "pyannote.audio" or name.startswith("pyannote.audio."):
+                raise ImportError("No module named 'pyannote.audio'")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.__import__", mock_import)
+        # Clear any cached pipeline
+        diarize_mod._pipeline_cache.clear()
+        monkeypatch.setenv("HF_TOKEN", "fake-token")
+
+        with pytest.raises(ImportError, match="uv sync --extra diarize"):
+            diarize_mod.diarize_audio("dummy.wav")
 
     def test_missing_hf_token_raises(self, monkeypatch):
         """Missing HF_TOKEN raises EnvironmentError."""

@@ -100,11 +100,14 @@ Test `assign_speakers` with mock data:
 - Empty inputs → no crash
 - Seek-to-seconds conversion correctness
 
-### Import guard test
-Verify `ImportError` with install instructions when `pyannote-audio` not installed.
+### Dependency guard tests
+- Verify `ImportError` with install instructions when `pyannote-audio` not installed (monkeypatched import)
+- Verify `EnvironmentError` when `HF_TOKEN` is missing (skips when pyannote not installed)
 
-### E2E test (`@pytest.mark.slow`) — requires pyannote + HF_TOKEN
-Generate multi-speaker audio with TTS (two calls, concatenate), transcribe with `diarize=True`, verify at least 2 distinct speakers in output.
+### Integration tests
+- Verify `transcribe(diarize=True)` transforms segments from lists to dicts with speaker labels
+- Verify `transcribe(diarize=False)` preserves original segment format (backward compat)
+- Verify `num_speakers`/`min_speakers`/`max_speakers` are forwarded through `transcribe()`
 
 ---
 
