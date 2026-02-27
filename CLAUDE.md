@@ -12,6 +12,7 @@ Lightning Whisper MLX is a high-performance Whisper speech-to-text implementatio
 uv sync                  # base dependencies
 uv sync --extra dev      # + pytest
 uv sync --extra tts      # + f5-tts-mlx
+uv sync --extra diarize  # + pyannote-audio (speaker diarization)
 uv sync --all-extras     # everything
 ```
 
@@ -35,6 +36,7 @@ __init__.py → lightning.py → transcribe.py → audio.py
                                             → decoding.py → tokenizer.py
                                             → timing.py
                                             → tokenizer.py
+                            → diarize.py → pyannote.audio (external, optional)
            → tts.py → f5_tts_mlx (external, optional)
 ```
 
@@ -44,6 +46,7 @@ Two public classes re-exported from `__init__.py`:
 
 - **`LightningWhisperMLX`** (`lightning.py`) — STT. Constructor downloads Whisper weights from HuggingFace Hub; `transcribe()` delegates to `transcribe_audio()`.
 - **`LightningTTSMLX`** (`tts.py`) — TTS. Lazy-loaded via `__getattr__` to avoid requiring the optional `f5-tts-mlx` dependency. Wraps `f5_tts_mlx.generate.generate()`. Install with `uv sync --extra tts`.
+- **`diarize_audio()`** / **`assign_speakers()`** (`diarize.py`) — Speaker diarization. Lazy-imported via `__getattr__`. Requires optional `pyannote-audio` dependency. Install with `uv sync --extra diarize`. Requires `HF_TOKEN` env var.
 
 ### Model Registry (`lightning.py:models`)
 
@@ -95,7 +98,7 @@ Custom STFT via `mx.fft.rfft` and `mx.as_strided` (no scipy/librosa dependency f
 - Models download to `./mlx_models/{model_name}/` relative to CWD (created at init time)
 - Distilled models: different `hf_hub_download` path strategy (`filename` includes subdirectory, `local_dir="./"`) vs standard models (`filename` is just the file, `local_dir` is the model directory)
 - All inference runs in fp16 by default (`DecodingOptions.fp16 = True`)
-- `transcribe()` returns `dict` with keys: `text`, `segments` (list of `[start_seek, end_seek, text]`), `language`
+- `transcribe()` returns `dict` with keys: `text`, `segments` (list of `[start_seek, end_seek, text]`), `language`. With `diarize=True`, segments become dicts with `start`, `end`, `text`, `speaker` keys (seconds, not seek positions).
 
 ## Gotchas
 
