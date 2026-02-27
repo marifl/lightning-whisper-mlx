@@ -50,3 +50,26 @@ def test_transcribe_rejects_invalid_model(client):
         data={"model": "nonexistent-model"},
     )
     assert resp.status_code == 422
+
+
+def test_get_job_returns_status(client):
+    """GET /api/jobs/{id} returns job status after creation."""
+    wav_header = b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80>\x00\x00\x00}\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
+    create_resp = client.post(
+        "/api/transcribe",
+        files={"file": ("test.wav", io.BytesIO(wav_header), "audio/wav")},
+        data={"model": "tiny"},
+    )
+    job_id = create_resp.json()["job_id"]
+
+    resp = client.get(f"/api/jobs/{job_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["job_id"] == job_id
+    assert data["status"] in ("queued", "processing", "completed", "failed")
+
+
+def test_get_job_not_found(client):
+    """GET /api/jobs/{id} with invalid ID returns 404."""
+    resp = client.get("/api/jobs/nonexistent-id")
+    assert resp.status_code == 404
