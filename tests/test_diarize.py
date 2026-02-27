@@ -104,3 +104,21 @@ class TestAssignSpeakers:
 
         assert result[0]["start"] == pytest.approx(1.5, abs=0.02)
         assert result[0]["end"] == pytest.approx(3.5, abs=0.02)
+
+
+class TestDiarizeAudioImportGuard:
+    """diarize_audio must raise EnvironmentError when HF_TOKEN is missing."""
+
+    def test_missing_hf_token_raises(self, monkeypatch):
+        """Missing HF_TOKEN raises EnvironmentError."""
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        # Only test if pyannote is actually installed
+        try:
+            import pyannote.audio  # noqa: F401
+        except ImportError:
+            pytest.skip("pyannote-audio not installed")
+
+        from lightning_whisper_mlx.diarize import diarize_audio
+
+        with pytest.raises(EnvironmentError, match="HF_TOKEN"):
+            diarize_audio("dummy.wav")
