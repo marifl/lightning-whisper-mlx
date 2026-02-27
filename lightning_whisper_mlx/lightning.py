@@ -86,7 +86,9 @@ class LightningWhisperMLX():
         hf_hub_download(repo_id=repo_id, filename=filename2, local_dir=local_dir)
     
     def transcribe(self, audio_path, language=None, diarize=False,
-                   num_speakers=None, min_speakers=None, max_speakers=None):
+                   num_speakers=None, min_speakers=None, max_speakers=None,
+                   correct=False, correct_backend="anthropic", correct_model=None,
+                   glossary=None, correct_fn=None):
         result = transcribe_audio(audio_path, path_or_hf_repo=f'./mlx_models/{self.name}', language=language, batch_size=self.batch_size)
         if diarize:
             from .diarize import diarize_audio, assign_speakers
@@ -97,4 +99,14 @@ class LightningWhisperMLX():
                 max_speakers=max_speakers,
             )
             result["segments"] = assign_speakers(result["segments"], speaker_turns)
+        if correct:
+            from .correct import correct_transcription
+            result["segments"] = correct_transcription(
+                result["segments"],
+                backend=correct_backend,
+                model=correct_model,
+                glossary=glossary,
+                custom_fn=correct_fn,
+                language=result.get("language", "en"),
+            )
         return result

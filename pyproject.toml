@@ -16,6 +16,8 @@ dependencies = [
 [project.optional-dependencies]
 tts = ["f5-tts-mlx"]
 diarize = ["pyannote-audio>=3.1,<5"]
+correct = ["mlx-lm"]
+correct-api = ["anthropic"]
 dev = ["pytest"]
 
 [build-system]
