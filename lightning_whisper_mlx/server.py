@@ -4,11 +4,14 @@ Run with: uvicorn lightning_whisper_mlx.server:app --reload
 """
 from __future__ import annotations
 
+import tempfile
+import threading
 import uuid
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, UploadFile, Form
+from fastapi import FastAPI, HTTPException, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 
 from .lightning import models
@@ -27,3 +30,110 @@ app.add_middleware(
 def list_models() -> dict[str, list[str]]:
     """Return available models and their quantization options."""
     return {name: list(variants.keys()) for name, variants in models.items()}
+
+
+class JobStatus(str, Enum):
+    queued = "queued"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+
+
+# In-memory job store (non-goal v1: no persistence)
+_jobs: dict[str, dict[str, Any]] = {}
+
+
+def _run_transcription(job_id: str, audio_path: str, model: str,
+                        quant: str | None, batch_size: int,
+                        diarize: bool, hf_token: str | None,
+                        correct: bool, correct_backend: str | None,
+                        anthropic_api_key: str | None) -> None:
+    """Run transcription in a background thread."""
+    import os
+    try:
+        _jobs[job_id]["status"] = JobStatus.processing
+
+        if hf_token:
+            os.environ["HF_TOKEN"] = hf_token
+
+        from .lightning import LightningWhisperMLX
+        whisper = LightningWhisperMLX(model, batch_size=batch_size, quant=quant)
+
+        result = whisper.transcribe(
+            audio_path,
+            diarize=diarize,
+            correct=correct,
+            correct_backend=correct_backend if correct else None,
+        )
+
+        _jobs[job_id]["status"] = JobStatus.completed
+        _jobs[job_id]["result"] = result
+    except Exception as e:
+        _jobs[job_id]["status"] = JobStatus.failed
+        _jobs[job_id]["error"] = str(e)
+    finally:
+        # Clean up temp file
+        Path(audio_path).unlink(missing_ok=True)
+
+
+@app.post("/api/transcribe", status_code=202)
+async def transcribe(
+    file: UploadFile,
+    model: str = Form(default="distil-large-v3"),
+    quant: str | None = Form(default=None),
+    batch_size: int = Form(default=12),
+    diarize: bool = Form(default=False),
+    hf_token: str | None = Form(default=None),
+    correct: bool = Form(default=False),
+    correct_backend: str | None = Form(default=None),
+    anthropic_api_key: str | None = Form(default=None),
+) -> dict[str, str]:
+    """Upload audio and start a transcription job."""
+    # Validate model
+    if model not in models:
+        raise HTTPException(status_code=422, detail=f"Invalid model: {model}. Available: {list(models.keys())}")
+
+    if quant and quant not in ("4bit", "8bit"):
+        raise HTTPException(status_code=422, detail="quant must be '4bit', '8bit', or null")
+
+    if quant and "distil" in model:
+        raise HTTPException(status_code=422, detail=f"Quantization not supported for distilled model '{model}'")
+
+    # Save uploaded file to temp location
+    suffix = Path(file.filename).suffix if file.filename else ".wav"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = {
+        "status": JobStatus.queued,
+        "result": None,
+        "error": None,
+    }
+
+    thread = threading.Thread(
+        target=_run_transcription,
+        args=(job_id, tmp_path, model, quant, batch_size,
+              diarize, hf_token, correct, correct_backend, anthropic_api_key),
+        daemon=True,
+    )
+    thread.start()
+
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str) -> dict[str, Any]:
+    """Poll job status and result."""
+    if job_id not in _jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _jobs[job_id]
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "result": job["result"],
+        "error": job["error"],
+    }
