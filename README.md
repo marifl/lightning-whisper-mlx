@@ -27,6 +27,7 @@ pip install lightning-whisper-mlx[diarize]      # + speaker diarization (pyannot
 pip install lightning-whisper-mlx[correct]       # + local LLM correction (mlx-lm)
 pip install lightning-whisper-mlx[correct-api]   # + API-based correction (anthropic)
 pip install lightning-whisper-mlx[tts]           # + text-to-speech (f5-tts-mlx)
+pip install lightning-whisper-mlx[server]        # + FastAPI server / web UI
 ```
 
 ## Usage

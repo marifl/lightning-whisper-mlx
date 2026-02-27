@@ -41,6 +41,7 @@ class JobStatus(str, Enum):
 
 # In-memory job store (non-goal v1: no persistence)
 _jobs: dict[str, dict[str, Any]] = {}
+_jobs_lock = threading.Lock()
 
 
 def _run_transcription(job_id: str, audio_path: str, model: str,
@@ -51,26 +52,35 @@ def _run_transcription(job_id: str, audio_path: str, model: str,
     """Run transcription in a background thread."""
     import os
     try:
-        _jobs[job_id]["status"] = JobStatus.processing
+        with _jobs_lock:
+            _jobs[job_id]["status"] = JobStatus.processing
 
         if hf_token:
             os.environ["HF_TOKEN"] = hf_token
+        if anthropic_api_key:
+            os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
 
         from .lightning import LightningWhisperMLX
         whisper = LightningWhisperMLX(model, batch_size=batch_size, quant=quant)
 
-        result = whisper.transcribe(
-            audio_path,
-            diarize=diarize,
-            correct=correct,
-            correct_backend=correct_backend if correct else None,
-        )
+        transcribe_kwargs: dict[str, Any] = {
+            "diarize": diarize,
+            "correct": correct,
+        }
+        # Only pass correct_backend when explicitly provided;
+        # otherwise let transcribe() use its own default ("anthropic").
+        if correct and correct_backend:
+            transcribe_kwargs["correct_backend"] = correct_backend
 
-        _jobs[job_id]["status"] = JobStatus.completed
-        _jobs[job_id]["result"] = result
+        result = whisper.transcribe(audio_path, **transcribe_kwargs)
+
+        with _jobs_lock:
+            _jobs[job_id]["status"] = JobStatus.completed
+            _jobs[job_id]["result"] = result
     except Exception as e:
-        _jobs[job_id]["status"] = JobStatus.failed
-        _jobs[job_id]["error"] = str(e)
+        with _jobs_lock:
+            _jobs[job_id]["status"] = JobStatus.failed
+            _jobs[job_id]["error"] = str(e)
     finally:
         # Clean up temp file
         Path(audio_path).unlink(missing_ok=True)
@@ -89,6 +99,10 @@ async def transcribe(
     anthropic_api_key: str | None = Form(default=None),
 ) -> dict[str, str]:
     """Upload audio and start a transcription job."""
+    # Normalize 'base' to no quantization for consistency with /api/models
+    if quant == "base":
+        quant = None
+
     # Validate model
     if model not in models:
         raise HTTPException(status_code=422, detail=f"Invalid model: {model}. Available: {list(models.keys())}")
@@ -99,19 +113,23 @@ async def transcribe(
     if quant and "distil" in model:
         raise HTTPException(status_code=422, detail=f"Quantization not supported for distilled model '{model}'")
 
-    # Save uploaded file to temp location
+    # Save uploaded file to temp location (streamed in chunks)
     suffix = Path(file.filename).suffix if file.filename else ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        content = await file.read()
-        tmp.write(content)
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            tmp.write(chunk)
         tmp_path = tmp.name
 
     job_id = str(uuid.uuid4())
-    _jobs[job_id] = {
-        "status": JobStatus.queued,
-        "result": None,
-        "error": None,
-    }
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "status": JobStatus.queued,
+            "result": None,
+            "error": None,
+        }
 
     thread = threading.Thread(
         target=_run_transcription,
@@ -127,13 +145,13 @@ async def transcribe(
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str) -> dict[str, Any]:
     """Poll job status and result."""
-    if job_id not in _jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    job = _jobs[job_id]
-    return {
-        "job_id": job_id,
-        "status": job["status"],
-        "result": job["result"],
-        "error": job["error"],
-    }
+    with _jobs_lock:
+        if job_id not in _jobs:
+            raise HTTPException(status_code=404, detail="Job not found")
+        job = _jobs[job_id]
+        return {
+            "job_id": job_id,
+            "status": job["status"],
+            "result": job["result"],
+            "error": job["error"],
+        }

@@ -133,7 +133,7 @@ All shadcn/ui New York style components:
 | `GET /api/models` | GET | List available models + supported quantizations |
 | `POST /api/transcribe` | POST | Upload audio file, start transcription job |
 | `GET /api/jobs/{job_id}` | GET | Poll job status + result |
-| `GET /api/jobs/{job_id}/stream` | GET (SSE) | Stream progress updates |
+| `GET /api/jobs/{job_id}/stream` | GET (SSE) | Stream progress updates *(future — not in v1)* |
 
 ### POST /api/transcribe
 
@@ -163,7 +163,7 @@ Response:
 {
   "job_id": "uuid",
   "status": "processing" | "completed" | "failed",
-  "progress": 0.65,
+  "progress": 0.65,  // future — not in v1
   "result": {
     "text": "...",
     "segments": [...],

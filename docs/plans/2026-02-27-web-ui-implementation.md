@@ -9,9 +9,9 @@
 **Tech Stack:** Python (FastAPI, uvicorn), Next.js 16, React 19, Tailwind CSS 4, shadcn/ui (New York), Lexend font, Lucide icons, React Hook Form + Zod.
 
 **Reference repos:**
-- Backend: `/Users/marcusifland/prj/lightning-whisper-mlx/`
-- Design source: `/Users/marcusifland/prj/Helperei_Forschung/`
-- Frontend target: `/Users/marcusifland/prj/lightning-whisper-mlx-ui/` (to be created)
+- Backend: `../lightning-whisper-mlx/`
+- Design source: `../Helperei_Forschung/`
+- Frontend target: `../lightning-whisper-mlx-ui/` (to be created)
 
 ---
 

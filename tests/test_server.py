@@ -1,7 +1,11 @@
 """Tests for the FastAPI server module."""
 import io
+from unittest.mock import patch
 
 import pytest
+
+pytest.importorskip("fastapi")
+
 from fastapi.testclient import TestClient
 
 from lightning_whisper_mlx.server import app
@@ -10,6 +14,20 @@ from lightning_whisper_mlx.server import app
 @pytest.fixture
 def client():
     return TestClient(app)
+
+
+def _noop_transcription(*args, **kwargs):
+    """Stub that marks the job as completed with dummy data."""
+    from lightning_whisper_mlx.server import _jobs, _jobs_lock, JobStatus
+
+    job_id = args[0]
+    with _jobs_lock:
+        _jobs[job_id]["status"] = JobStatus.completed
+        _jobs[job_id]["result"] = {
+            "text": "test transcription",
+            "segments": [],
+            "language": "en",
+        }
 
 
 def test_list_models(client):
@@ -26,9 +44,9 @@ def test_list_models(client):
     assert set(data["distil-small.en"]) == {"base"}
 
 
+@patch("lightning_whisper_mlx.server._run_transcription", _noop_transcription)
 def test_transcribe_creates_job(client):
     """POST /api/transcribe with an audio file returns a job_id and queued status."""
-    # Create a tiny valid WAV file (44 bytes -- header only, no samples)
     wav_header = b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80>\x00\x00\x00}\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
     resp = client.post(
         "/api/transcribe",
@@ -52,6 +70,19 @@ def test_transcribe_rejects_invalid_model(client):
     assert resp.status_code == 422
 
 
+@patch("lightning_whisper_mlx.server._run_transcription", _noop_transcription)
+def test_transcribe_accepts_base_quant(client):
+    """POST /api/transcribe normalizes quant='base' to None."""
+    wav_header = b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80>\x00\x00\x00}\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
+    resp = client.post(
+        "/api/transcribe",
+        files={"file": ("test.wav", io.BytesIO(wav_header), "audio/wav")},
+        data={"model": "tiny", "quant": "base"},
+    )
+    assert resp.status_code == 202
+
+
+@patch("lightning_whisper_mlx.server._run_transcription", _noop_transcription)
 def test_get_job_returns_status(client):
     """GET /api/jobs/{id} returns job status after creation."""
     wav_header = b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x80>\x00\x00\x00}\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
