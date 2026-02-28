@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from .lightning import models
 
@@ -226,4 +227,6 @@ def get_tts_audio(job_id: str) -> FileResponse:
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Audio file not found")
 
-    return FileResponse(audio_path, media_type="audio/wav", filename=f"tts_{job_id}.wav")
+    cleanup = BackgroundTask(audio_path.unlink, missing_ok=True)
+    return FileResponse(audio_path, media_type="audio/wav", filename=f"tts_{job_id}.wav",
+                        background=cleanup)
