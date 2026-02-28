@@ -46,6 +46,17 @@ _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
 
 
+def _update_progress(job_id: str, phase: str, detail: str, percent: int) -> None:
+    """Update job progress info (thread-safe)."""
+    with _jobs_lock:
+        if job_id in _jobs:
+            _jobs[job_id]["progress"] = {
+                "phase": phase,
+                "detail": detail,
+                "percent": percent,
+            }
+
+
 def _run_transcription(job_id: str, audio_path: str, model: str,
                         quant: str | None, batch_size: int,
                         diarize: bool, hf_token: str | None,
@@ -57,17 +68,23 @@ def _run_transcription(job_id: str, audio_path: str, model: str,
         with _jobs_lock:
             _jobs[job_id]["status"] = JobStatus.processing
 
+        def on_progress(phase: str, detail: str, percent: int) -> None:
+            _update_progress(job_id, phase, detail, percent)
+
         if hf_token:
             os.environ["HF_TOKEN"] = hf_token
         if anthropic_api_key:
             os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
 
+        _update_progress(job_id, "loading", "Loading model...", 0)
         from .lightning import LightningWhisperMLX
         whisper = LightningWhisperMLX(model, batch_size=batch_size, quant=quant)
+        _update_progress(job_id, "loading", "Model loaded", 5)
 
         transcribe_kwargs: dict[str, Any] = {
             "diarize": diarize,
             "correct": correct,
+            "progress_callback": on_progress,
         }
         # Only pass correct_backend when explicitly provided;
         # otherwise let transcribe() use its own default ("anthropic").
@@ -89,16 +106,21 @@ def _run_transcription(job_id: str, audio_path: str, model: str,
 
 
 def _run_tts(job_id: str, output_path: str, text: str,
-             steps: int, speed: float, seed: int | None) -> None:
+             steps: int, speed: float, seed: int | None,
+             model: str | None) -> None:
     """Run TTS generation in a background thread."""
     try:
         with _jobs_lock:
             _jobs[job_id]["status"] = JobStatus.processing
 
+        _update_progress(job_id, "loading", "Loading TTS model...", 0)
         from .tts import LightningTTSMLX
-        tts = LightningTTSMLX()
+        tts = LightningTTSMLX(model=model) if model else LightningTTSMLX()
+
+        _update_progress(job_id, "generating", "Generating speech...", 20)
         tts.generate(text=text, output_path=output_path, steps=steps, speed=speed, seed=seed)
 
+        _update_progress(job_id, "completed", "Done", 100)
         with _jobs_lock:
             _jobs[job_id]["status"] = JobStatus.completed
             _jobs[job_id]["result"] = {"audio_path": output_path}
@@ -152,6 +174,7 @@ async def transcribe(
             "status": JobStatus.queued,
             "result": None,
             "error": None,
+            "progress": None,
         }
 
     thread = threading.Thread(
@@ -177,6 +200,7 @@ def get_job(job_id: str) -> dict[str, Any]:
             "status": job["status"],
             "result": job["result"],
             "error": job["error"],
+            "progress": job.get("progress"),
         }
 
 
@@ -186,6 +210,7 @@ async def text_to_speech(
     steps: int = Form(default=8),
     speed: float = Form(default=1.0),
     seed: int | None = Form(default=None),
+    model: str | None = Form(default=None),
 ) -> dict[str, str]:
     """Submit text for speech synthesis."""
     if not text.strip():
@@ -199,11 +224,12 @@ async def text_to_speech(
             "status": JobStatus.queued,
             "result": None,
             "error": None,
+            "progress": None,
         }
 
     thread = threading.Thread(
         target=_run_tts,
-        args=(job_id, output_path, text, steps, speed, seed),
+        args=(job_id, output_path, text, steps, speed, seed, model),
         daemon=True,
     )
     thread.start()
@@ -230,3 +256,33 @@ def get_tts_audio(job_id: str) -> FileResponse:
     cleanup = BackgroundTask(audio_path.unlink, missing_ok=True)
     return FileResponse(audio_path, media_type="audio/wav", filename=f"tts_{job_id}.wav",
                         background=cleanup)
+
+
+# --- Speaker API ---
+
+from .speakers import create_speaker as _create_speaker, list_speakers as _list_speakers, delete_speaker as _delete_speaker
+
+
+@app.get("/api/speakers")
+def get_speakers() -> list[dict]:
+    """List all speaker profiles."""
+    return _list_speakers()
+
+
+@app.post("/api/speakers", status_code=201)
+async def create_speaker_endpoint(
+    name: str = Form(),
+    ref_text: str = Form(),
+    ref_audio: UploadFile = ...,
+) -> dict:
+    """Create a new speaker profile with reference audio."""
+    audio_bytes = await ref_audio.read()
+    return _create_speaker(name, audio_bytes, ref_text)
+
+
+@app.delete("/api/speakers/{speaker_id}")
+def delete_speaker_endpoint(speaker_id: str) -> dict:
+    """Delete a speaker profile."""
+    if not _delete_speaker(speaker_id):
+        raise HTTPException(status_code=404, detail="Speaker not found")
+    return {"deleted": True}

@@ -165,3 +165,77 @@ def test_tts_audio_not_found(client):
     """GET /api/tts-jobs/{id}/audio with invalid ID returns 404."""
     resp = client.get("/api/tts-jobs/nonexistent-id/audio")
     assert resp.status_code == 404
+
+
+# --- Speaker API tests ---
+
+def _make_wav_bytes() -> bytes:
+    """Minimal valid WAV header."""
+    import wave, io
+    buf = io.BytesIO()
+    with wave.open(buf, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(b"\x00\x00" * 1600)
+    return buf.getvalue()
+
+
+@pytest.fixture(autouse=True)
+def tmp_speakers(tmp_path, monkeypatch):
+    """Redirect speaker storage to temp dir."""
+    monkeypatch.setattr("lightning_whisper_mlx.speakers.SPEAKERS_DIR", tmp_path)
+    return tmp_path
+
+
+def test_list_speakers_empty(client):
+    """GET /api/speakers returns empty list initially."""
+    resp = client.get("/api/speakers")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_create_speaker(client):
+    """POST /api/speakers creates a speaker and returns metadata."""
+    resp = client.post(
+        "/api/speakers",
+        files={"ref_audio": ("voice.wav", io.BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"name": "Alice", "ref_text": "Hello, I am Alice."},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["name"] == "Alice"
+    assert "id" in data
+
+
+def test_create_and_list_speakers(client):
+    """Created speakers appear in list."""
+    client.post(
+        "/api/speakers",
+        files={"ref_audio": ("voice.wav", io.BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"name": "Alice", "ref_text": "ref A"},
+    )
+    resp = client.get("/api/speakers")
+    assert len(resp.json()) == 1
+    assert resp.json()[0]["name"] == "Alice"
+
+
+def test_delete_speaker(client):
+    """DELETE /api/speakers/{id} removes the speaker."""
+    create_resp = client.post(
+        "/api/speakers",
+        files={"ref_audio": ("voice.wav", io.BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"name": "Alice", "ref_text": "ref A"},
+    )
+    sid = create_resp.json()["id"]
+    del_resp = client.delete(f"/api/speakers/{sid}")
+    assert del_resp.status_code == 200
+
+    resp = client.get("/api/speakers")
+    assert resp.json() == []
+
+
+def test_delete_speaker_not_found(client):
+    """DELETE /api/speakers/{id} with bad ID returns 404."""
+    resp = client.delete("/api/speakers/nonexistent")
+    assert resp.status_code == 404
