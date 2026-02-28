@@ -308,3 +308,44 @@ def test_dialog_tts_rejects_missing_speaker(client):
         headers={"Content-Type": "application/json"},
     )
     assert resp.status_code == 422
+
+
+@patch("lightning_whisper_mlx.server._run_dialog_tts", _noop_dialog_tts)
+def test_dialog_tts_full_flow(client):
+    """Full flow: create speakers -> submit dialog -> poll -> download audio."""
+    # Create two speakers
+    s1 = client.post(
+        "/api/speakers",
+        files={"ref_audio": ("v.wav", io.BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"name": "Alice", "ref_text": "Hello."},
+    ).json()
+    s2 = client.post(
+        "/api/speakers",
+        files={"ref_audio": ("v.wav", io.BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"name": "Bob", "ref_text": "Hi."},
+    ).json()
+
+    # Submit dialog
+    resp = client.post(
+        "/api/tts/dialog",
+        content=json_mod.dumps({
+            "segments": [
+                {"speaker_id": s1["id"], "text": "[warmly] Hello Bob!"},
+                {"speaker_id": s2["id"], "text": "[curious] Hey Alice."},
+            ],
+            "steps": 4,
+            "pause_between_ms": 200,
+        }),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 202
+    job_id = resp.json()["job_id"]
+
+    # Poll — should complete (mocked)
+    job_resp = client.get(f"/api/jobs/{job_id}")
+    assert job_resp.json()["status"] == "completed"
+
+    # Download audio
+    audio_resp = client.get(f"/api/tts-jobs/{job_id}/audio")
+    assert audio_resp.status_code == 200
+    assert audio_resp.headers["content-type"] == "audio/wav"
