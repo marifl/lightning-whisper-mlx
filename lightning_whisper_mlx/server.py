@@ -13,6 +13,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from .lightning import models
 
@@ -86,6 +87,27 @@ def _run_transcription(job_id: str, audio_path: str, model: str,
         Path(audio_path).unlink(missing_ok=True)
 
 
+def _run_tts(job_id: str, output_path: str, text: str,
+             steps: int, speed: float, seed: int | None) -> None:
+    """Run TTS generation in a background thread."""
+    try:
+        with _jobs_lock:
+            _jobs[job_id]["status"] = JobStatus.processing
+
+        from .tts import LightningTTSMLX
+        tts = LightningTTSMLX()
+        tts.generate(text=text, output_path=output_path, steps=steps, speed=speed, seed=seed)
+
+        with _jobs_lock:
+            _jobs[job_id]["status"] = JobStatus.completed
+            _jobs[job_id]["result"] = {"audio_path": output_path}
+    except Exception as e:
+        with _jobs_lock:
+            _jobs[job_id]["status"] = JobStatus.failed
+            _jobs[job_id]["error"] = str(e)
+        Path(output_path).unlink(missing_ok=True)
+
+
 @app.post("/api/transcribe", status_code=202)
 async def transcribe(
     file: UploadFile,
@@ -155,3 +177,53 @@ def get_job(job_id: str) -> dict[str, Any]:
             "result": job["result"],
             "error": job["error"],
         }
+
+
+@app.post("/api/tts", status_code=202)
+async def text_to_speech(
+    text: str = Form(),
+    steps: int = Form(default=8),
+    speed: float = Form(default=1.0),
+    seed: int | None = Form(default=None),
+) -> dict[str, str]:
+    """Submit text for speech synthesis."""
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="text must not be empty")
+
+    job_id = str(uuid.uuid4())
+    output_path = str(Path(tempfile.gettempdir()) / f"tts_{job_id}.wav")
+
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "status": JobStatus.queued,
+            "result": None,
+            "error": None,
+        }
+
+    thread = threading.Thread(
+        target=_run_tts,
+        args=(job_id, output_path, text, steps, speed, seed),
+        daemon=True,
+    )
+    thread.start()
+
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/api/tts-jobs/{job_id}/audio")
+def get_tts_audio(job_id: str) -> FileResponse:
+    """Download the generated audio file."""
+    with _jobs_lock:
+        if job_id not in _jobs:
+            raise HTTPException(status_code=404, detail="Job not found")
+        job = _jobs[job_id]
+
+    result = job.get("result")
+    if not result or not result.get("audio_path"):
+        raise HTTPException(status_code=404, detail="Audio not available")
+
+    audio_path = Path(result["audio_path"])
+    if not audio_path.exists():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    return FileResponse(audio_path, media_type="audio/wav", filename=f"tts_{job_id}.wav")
