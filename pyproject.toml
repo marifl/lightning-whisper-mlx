@@ -14,8 +14,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-tts = ["f5-tts-mlx"]
+tts = ["f5-tts-mlx", "soundfile"]
 diarize = ["pyannote-audio>=3.1,<5"]
+correct = ["mlx-lm"]
+correct-api = ["anthropic"]
+server = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "python-multipart>=0.0.9"]
 dev = ["pytest"]
 
 [build-system]

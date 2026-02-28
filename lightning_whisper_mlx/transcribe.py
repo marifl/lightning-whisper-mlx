@@ -58,6 +58,7 @@ def transcribe_audio(
     clip_timestamps: Union[str, List[float]] = "0",
     hallucination_silence_threshold: Optional[float] = None,
     batch_size: int = 12,
+    progress_callback=None,
     **decode_options,
 ):
     """
@@ -132,6 +133,11 @@ def transcribe_audio(
     # Pad 30-seconds of silence to the input audio, for slicing
     mel = log_mel_spectrogram(audio, n_mels=model.dims.n_mels, padding=N_SAMPLES)
     content_frames = mel.shape[-2] - N_FRAMES
+    total_segments = max(1, (content_frames + N_FRAMES - 1) // N_FRAMES)
+    segments_done = 0
+
+    if progress_callback:
+        progress_callback("encoding", "Audio encoded", 5)
 
     if verbose:
         system_encoding = sys.getdefaultencoding()
@@ -414,7 +420,11 @@ def transcribe_audio(
             ]
 
             all_segments.append([start_seek, end_seek,tokenizer.decode(tokens)])
-               
+            segments_done += 1
+            if progress_callback:
+                pct = 10 + int(70 * segments_done / total_segments)
+                progress_callback("transcribing", f"Segment {segments_done}/{total_segments}", pct)
+
             all_tokens.extend(
                 [
                     token
