@@ -104,3 +104,64 @@ def test_get_job_not_found(client):
     """GET /api/jobs/{id} with invalid ID returns 404."""
     resp = client.get("/api/jobs/nonexistent-id")
     assert resp.status_code == 404
+
+
+def _noop_tts(*args, **kwargs):
+    """Stub that marks the TTS job as completed with a dummy file path."""
+    from lightning_whisper_mlx.server import _jobs, _jobs_lock, JobStatus
+
+    job_id = args[0]
+    # Create a minimal WAV file at the expected path
+    import wave
+    audio_path = args[1]
+    with wave.open(audio_path, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(b"\x00\x00" * 1600)  # 0.1s silence
+    with _jobs_lock:
+        _jobs[job_id]["status"] = JobStatus.completed
+        _jobs[job_id]["result"] = {"audio_path": audio_path}
+
+
+@patch("lightning_whisper_mlx.server._run_tts", _noop_tts)
+def test_tts_creates_job(client):
+    """POST /api/tts with text returns a job_id and queued status."""
+    resp = client.post("/api/tts", data={"text": "Hello world"})
+    assert resp.status_code == 202
+    data = resp.json()
+    assert "job_id" in data
+    assert data["status"] == "queued"
+
+
+def test_tts_rejects_empty_text(client):
+    """POST /api/tts with empty text returns 422."""
+    resp = client.post("/api/tts", data={"text": ""})
+    assert resp.status_code == 422
+
+
+def test_tts_rejects_missing_text(client):
+    """POST /api/tts without text field returns 422."""
+    resp = client.post("/api/tts")
+    assert resp.status_code == 422
+
+
+@patch("lightning_whisper_mlx.server._run_tts", _noop_tts)
+def test_tts_audio_download(client):
+    """GET /api/tts-jobs/{id}/audio returns WAV file after job completes."""
+    create_resp = client.post("/api/tts", data={"text": "Test audio"})
+    job_id = create_resp.json()["job_id"]
+
+    job_resp = client.get(f"/api/jobs/{job_id}")
+    assert job_resp.json()["status"] == "completed"
+
+    audio_resp = client.get(f"/api/tts-jobs/{job_id}/audio")
+    assert audio_resp.status_code == 200
+    assert audio_resp.headers["content-type"] == "audio/wav"
+    assert len(audio_resp.content) > 0
+
+
+def test_tts_audio_not_found(client):
+    """GET /api/tts-jobs/{id}/audio with invalid ID returns 404."""
+    resp = client.get("/api/tts-jobs/nonexistent-id/audio")
+    assert resp.status_code == 404
