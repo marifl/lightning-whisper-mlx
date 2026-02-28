@@ -88,9 +88,15 @@ class LightningWhisperMLX():
     def transcribe(self, audio_path, language=None, diarize=False,
                    num_speakers=None, min_speakers=None, max_speakers=None,
                    correct=False, correct_backend="anthropic", correct_model=None,
-                   glossary=None, correct_fn=None):
-        result = transcribe_audio(audio_path, path_or_hf_repo=f'./mlx_models/{self.name}', language=language, batch_size=self.batch_size)
+                   glossary=None, correct_fn=None, progress_callback=None):
+        result = transcribe_audio(audio_path, path_or_hf_repo=f'./mlx_models/{self.name}', language=language, batch_size=self.batch_size, progress_callback=progress_callback)
+
+        if progress_callback:
+            progress_callback("transcribing", "Transcription complete", 80)
+
         if diarize:
+            if progress_callback:
+                progress_callback("diarizing", "Running speaker diarization...", 85)
             from .diarize import diarize_audio, assign_speakers
             speaker_turns = diarize_audio(
                 audio_path,
@@ -100,6 +106,8 @@ class LightningWhisperMLX():
             )
             result["segments"] = assign_speakers(result["segments"], speaker_turns)
         if correct:
+            if progress_callback:
+                progress_callback("correcting", "Correcting text...", 90)
             from .correct import correct_transcription
             result["segments"] = correct_transcription(
                 result["segments"],
@@ -109,4 +117,8 @@ class LightningWhisperMLX():
                 custom_fn=correct_fn,
                 language=result.get("language", "en"),
             )
+
+        if progress_callback:
+            progress_callback("completed", "Done", 100)
+
         return result

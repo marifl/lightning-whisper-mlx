@@ -2,7 +2,7 @@
 
 from typing import Callable, Optional
 
-_DEFAULT_LOCAL_MODEL = "mlx-community/Llama-3.2-3B-Instruct-4bit"
+_DEFAULT_LOCAL_MODEL = "Qwen/Qwen3-4B-MLX-4bit"
 _DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 
 
