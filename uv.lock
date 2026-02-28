@@ -1600,6 +1600,7 @@ server = [
 ]
 tts = [
     { name = "f5-tts-mlx" },
+    { name = "soundfile" },
 ]
 
 [package.metadata]
@@ -1616,6 +1617,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "python-multipart", marker = "extra == 'server'", specifier = ">=0.0.9" },
     { name = "scipy" },
+    { name = "soundfile", marker = "extra == 'tts'" },
     { name = "tiktoken", specifier = "==0.3.3" },
     { name = "tqdm" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'server'", specifier = ">=0.30" },

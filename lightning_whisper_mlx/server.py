@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, Form
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
@@ -286,3 +287,122 @@ def delete_speaker_endpoint(speaker_id: str) -> dict:
     if not _delete_speaker(speaker_id):
         raise HTTPException(status_code=404, detail="Speaker not found")
     return {"deleted": True}
+
+
+# --- Dialog TTS ---
+
+class DialogSegment(BaseModel):
+    speaker_id: str
+    text: str
+
+class DialogRequest(BaseModel):
+    segments: list[DialogSegment]
+    steps: int = 8
+    speed: float = 1.0
+    pause_between_ms: int = 300
+    model: str | None = None
+
+
+def _run_dialog_tts(job_id: str, output_path: str, segments: list[dict],
+                    steps: int, speed: float, pause_between_ms: int,
+                    model: str | None) -> None:
+    """Run multi-speaker dialog TTS in a background thread."""
+    try:
+        import numpy as np
+        import soundfile as sf
+
+        with _jobs_lock:
+            _jobs[job_id]["status"] = JobStatus.processing
+
+        from .dialog import strip_tags, chunk_text
+        from .speakers import get_speaker, get_speaker_audio_path
+        from .tts import LightningTTSMLX
+
+        tts = LightningTTSMLX(model=model) if model else LightningTTSMLX()
+
+        all_audio: list[np.ndarray] = []
+        total_segments = len(segments)
+        prev_speaker_id = None
+
+        for i, seg in enumerate(segments):
+            speaker = get_speaker(seg["speaker_id"])
+            ref_audio_path = str(get_speaker_audio_path(seg["speaker_id"]))
+            ref_text = speaker["ref_text"]
+
+            clean_text = strip_tags(seg["text"])
+            chunks = chunk_text(clean_text)
+
+            if prev_speaker_id is not None and seg["speaker_id"] != prev_speaker_id:
+                silence_samples = int(24000 * pause_between_ms / 1000)
+                all_audio.append(np.zeros(silence_samples, dtype=np.float32))
+
+            for chunk in chunks:
+                percent = int((i / total_segments) * 100)
+                _update_progress(job_id, "generating",
+                                 f"Generating segment {i + 1}/{total_segments}...",
+                                 percent)
+
+                chunk_path = str(Path(output_path).parent / f"chunk_{job_id}_{i}_{id(chunk)}.wav")
+                tts.generate(
+                    text=chunk,
+                    output_path=chunk_path,
+                    ref_audio=ref_audio_path,
+                    ref_text=ref_text,
+                    steps=steps,
+                    speed=speed,
+                )
+                chunk_audio, _ = sf.read(chunk_path, dtype="float32")
+                all_audio.append(chunk_audio)
+                Path(chunk_path).unlink(missing_ok=True)
+
+            prev_speaker_id = seg["speaker_id"]
+
+        if all_audio:
+            final_audio = np.concatenate(all_audio)
+            sf.write(output_path, final_audio, 24000)
+
+        _update_progress(job_id, "completed", "Done", 100)
+        with _jobs_lock:
+            _jobs[job_id]["status"] = JobStatus.completed
+            _jobs[job_id]["result"] = {"audio_path": output_path}
+    except Exception as e:
+        with _jobs_lock:
+            _jobs[job_id]["status"] = JobStatus.failed
+            _jobs[job_id]["error"] = str(e)
+        Path(output_path).unlink(missing_ok=True)
+
+
+@app.post("/api/tts/dialog", status_code=202)
+async def dialog_tts(req: DialogRequest) -> dict[str, str]:
+    """Submit multi-speaker dialog for TTS generation."""
+    if not req.segments:
+        raise HTTPException(status_code=422, detail="segments must not be empty")
+
+    from .speakers import get_speaker
+    for seg in req.segments:
+        if get_speaker(seg.speaker_id) is None:
+            raise HTTPException(status_code=422,
+                                detail=f"Speaker not found: {seg.speaker_id}")
+
+    job_id = str(uuid.uuid4())
+    output_path = str(Path(tempfile.gettempdir()) / f"dialog_{job_id}.wav")
+
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "status": JobStatus.queued,
+            "result": None,
+            "error": None,
+            "progress": None,
+        }
+
+    segments_data = [{"speaker_id": s.speaker_id, "text": s.text} for s in req.segments]
+
+    thread = threading.Thread(
+        target=_run_dialog_tts,
+        args=(job_id, output_path, segments_data, req.steps, req.speed,
+              req.pause_between_ms, req.model),
+        daemon=True,
+    )
+    thread.start()
+
+    return {"job_id": job_id, "status": "queued"}

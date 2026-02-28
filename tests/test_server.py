@@ -239,3 +239,72 @@ def test_delete_speaker_not_found(client):
     """DELETE /api/speakers/{id} with bad ID returns 404."""
     resp = client.delete("/api/speakers/nonexistent")
     assert resp.status_code == 404
+
+
+# --- Dialog TTS tests ---
+
+import json as json_mod
+
+
+def _noop_dialog_tts(*args, **kwargs):
+    """Stub that marks the dialog TTS job as completed with a dummy WAV."""
+    from lightning_whisper_mlx.server import _jobs, _jobs_lock, JobStatus
+    import wave
+
+    job_id = args[0]
+    audio_path = args[1]
+    with wave.open(audio_path, "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(24000)
+        wf.writeframes(b"\x00\x00" * 2400)
+    with _jobs_lock:
+        _jobs[job_id]["status"] = JobStatus.completed
+        _jobs[job_id]["result"] = {"audio_path": audio_path}
+
+
+@patch("lightning_whisper_mlx.server._run_dialog_tts", _noop_dialog_tts)
+def test_dialog_tts_creates_job(client):
+    """POST /api/tts/dialog with segments returns a job_id."""
+    create_resp = client.post(
+        "/api/speakers",
+        files={"ref_audio": ("v.wav", io.BytesIO(_make_wav_bytes()), "audio/wav")},
+        data={"name": "Alice", "ref_text": "Hello."},
+    )
+    sid = create_resp.json()["id"]
+
+    resp = client.post(
+        "/api/tts/dialog",
+        content=json_mod.dumps({
+            "segments": [{"speaker_id": sid, "text": "Hello world."}],
+        }),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert "job_id" in data
+    assert data["status"] == "queued"
+
+
+@patch("lightning_whisper_mlx.server._run_dialog_tts", _noop_dialog_tts)
+def test_dialog_tts_rejects_empty_segments(client):
+    """POST /api/tts/dialog with empty segments returns 422."""
+    resp = client.post(
+        "/api/tts/dialog",
+        content=json_mod.dumps({"segments": []}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422
+
+
+@patch("lightning_whisper_mlx.server._run_dialog_tts", _noop_dialog_tts)
+def test_dialog_tts_rejects_missing_speaker(client):
+    """POST /api/tts/dialog with nonexistent speaker_id returns 422."""
+    resp = client.post(
+        "/api/tts/dialog",
+        content=json_mod.dumps({
+            "segments": [{"speaker_id": "nonexistent", "text": "Hello."}],
+        }),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422
